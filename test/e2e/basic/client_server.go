@@ -108,4 +108,10 @@ var _ = Describe("[Feature: Client-Server]", func() {
 			expectError: true,
 		})
 	})
+
+	Describe("TLS with custom certificate", func() {
+		supportProtocols := []string{"tcp", "kcp", "websocket"}
+		// TODO
+		_ = supportProtocols
+	})
 })

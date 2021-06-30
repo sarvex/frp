@@ -8,6 +8,7 @@ import (
 	"github.com/fatedier/frp/test/e2e/framework/consts"
 	"github.com/fatedier/frp/test/e2e/pkg/port"
 	"github.com/fatedier/frp/test/e2e/pkg/request"
+	"github.com/fatedier/frp/test/e2e/pkg/utils"
 
 	. "github.com/onsi/ginkgo"
 )
@@ -72,7 +73,7 @@ var _ = Describe("[Feature: Client-Plugins]", func() {
 		})
 	})
 
-	It("plugin http_proxy", func() {
+	It("http_proxy", func() {
 		serverConf := consts.DefaultServerConfig
 		clientConf := consts.DefaultClientConfig
 
@@ -102,5 +103,95 @@ var _ = Describe("[Feature: Client-Plugins]", func() {
 		framework.NewRequestExpect(f).PortName(framework.TCPEchoServerPort).RequestModify(func(r *request.Request) {
 			r.TCP().Proxy("http://abc:123@127.0.0.1:" + strconv.Itoa(remotePort))
 		})
+	})
+
+	It("socks5 proxy", func() {
+		serverConf := consts.DefaultServerConfig
+		clientConf := consts.DefaultClientConfig
+
+		remotePort := f.AllocPort()
+		clientConf += fmt.Sprintf(`
+		[tcp]
+		type = tcp
+		remote_port = %d
+		plugin = socks5
+		plugin_user = abc
+		plugin_passwd = 123
+		`, remotePort)
+
+		f.RunProcesses([]string{serverConf}, []string{clientConf})
+
+		// http proxy, no auth info
+		framework.NewRequestExpect(f).PortName(framework.TCPEchoServerPort).RequestModify(func(r *request.Request) {
+			r.TCP().Proxy("socks5://127.0.0.1:" + strconv.Itoa(remotePort))
+		}).ExpectError(true).Ensure()
+
+		// http proxy, correct auth
+		framework.NewRequestExpect(f).PortName(framework.TCPEchoServerPort).RequestModify(func(r *request.Request) {
+			r.TCP().Proxy("socks5://abc:123@127.0.0.1:" + strconv.Itoa(remotePort))
+		}).Ensure()
+	})
+
+	It("static_file", func() {
+		vhostPort := f.AllocPort()
+		serverConf := consts.DefaultServerConfig + fmt.Sprintf(`
+		vhost_http_port = %d
+		`, vhostPort)
+		clientConf := consts.DefaultClientConfig
+
+		remotePort := f.AllocPort()
+		f.WriteTempFile("test_static_file", "foo")
+		clientConf += fmt.Sprintf(`
+		[tcp]
+		type = tcp
+		remote_port = %d
+		plugin = static_file
+		plugin_local_path = %s
+
+		[http]
+		type = http
+		custom_domains = example.com
+		plugin = static_file
+		plugin_local_path = %s
+
+		[http-with-auth]
+		type = http
+		custom_domains = other.example.com
+		plugin = static_file
+		plugin_local_path = %s
+		plugin_http_user = abc
+		plugin_http_passwd = 123
+		`, remotePort, f.TempDirectory, f.TempDirectory, f.TempDirectory)
+
+		f.RunProcesses([]string{serverConf}, []string{clientConf})
+
+		// from tcp proxy
+		framework.NewRequestExpect(f).Request(
+			framework.NewHTTPRequest().HTTPPath("/test_static_file").Port(remotePort),
+		).ExpectResp([]byte("foo")).Ensure()
+
+		// from http proxy without auth
+		framework.NewRequestExpect(f).Request(
+			framework.NewHTTPRequest().HTTPHost("example.com").HTTPPath("/test_static_file").Port(vhostPort),
+		).ExpectResp([]byte("foo")).Ensure()
+
+		// from http proxy with auth
+		framework.NewRequestExpect(f).Request(
+			framework.NewHTTPRequest().HTTPHost("other.example.com").HTTPPath("/test_static_file").Port(vhostPort).HTTPHeaders(map[string]string{
+				"Authorization": utils.BasicAuth("abc", "123"),
+			}),
+		).ExpectResp([]byte("foo")).Ensure()
+	})
+
+	It("http2https", func() {
+		// TODO
+	})
+
+	It("https2http", func() {
+		// TODO
+	})
+
+	It("https2https", func() {
+		// TODO
 	})
 })
